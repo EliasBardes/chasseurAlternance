@@ -1,77 +1,51 @@
+# Chasseur d'Alternance
 
-Agent d'Automatisation de Recherche d'Alternance - Elias Bardes
+Application web de recherche d'alternance automatisee - Elias Bardes @ HETIC
 
-Ce script automatise la recherche d'alternance en Data Analysis. Il récupère les offres récentes sur LinkedIn et Welcome to the Jungle, les analyse via une IA (GPT-4) pour évaluer leur pertinence par rapport au profil d'Elias (HETIC, Python, Design) et génère des mails de candidature personnalisés.
+## Fonctionnalites
 
-Fonctionnalités
+- **Import CV** : Upload ton CV en PDF, extraction automatique du nom, filiere, competences et profil
+- **Recherche multi-sources** : Scraping sur LinkedIn, Indeed et HelloWork avec filtres (contrat, ville, rayon)
+- **Dashboard IA** : Pipeline automatique avec analyse LLM (Groq), scoring de pertinence, probabilite d'embauche et emails personnalises
+- **Lettre de motivation** : Generation automatique adaptee a chaque offre
+- **Base de donnees** : Stockage SQLite des offres pour suivi dans le temps
 
-•
-Scraping Multi-sources : Récupère les offres "Data Analyst" en alternance/stage.
+## Stack technique
 
-•
-Analyse Intelligente : Utilise un LLM pour extraire les compétences, le contact et noter l'offre (1-10).
+- **Frontend** : Streamlit
+- **Scraping** : requests + BeautifulSoup
+- **LLM** : Groq (Llama 3.1)
+- **CV parsing** : pdfplumber
+- **Deploiement** : Docker sur Render
 
-•
-Candidature Personnalisée : Génère un mail mettant en avant la formation à l'HETIC et le prix "Best Design".
+## Structure
 
-•
-Export CSV : Sauvegarde tout dans opportunites.csv.
+```
+app.py                  # Application Streamlit (2 onglets)
+daily.py                # Pipeline quotidien automatique
+scraper.py              # Scraper pour le pipeline automatique
+company_researcher.py   # Recherche web sur les entreprises
+llm_processor.py        # Analyse LLM des offres
+email_sender.py         # Envoi d'email quotidien
+modules/
+  cv_parser.py          # Extraction d'infos du CV
+  scraper.py            # Scraper pour la recherche interactive
+  cover_letter.py       # Generation de lettres de motivation
+  database.py           # Base SQLite
+```
 
-Installation
+## Installation locale
 
-1.
-Installez Python 3.10+.
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-2.
-Installez les dépendances :
+## Variables d'environnement
 
-Bash
-
-
-pip install playwright openai
-playwright install chromium
-
-
-
-
-
-3.
-Configurez votre clé API OpenAI dans les variables d'environnement :
-
-Bash
-
-
-export OPENAI_API_KEY='votre_cle_ici'
-
-
-
-
-
-Utilisation
-
-Lancez simplement le script principal :
-
-Bash
-
-
-python main.py
-
-
-
-Structure du Code
-
-•
-main.py : Orchestrateur du pipeline.
-
-•
-scraper.py : Logique de scraping avec Playwright.
-
-•
-llm_processor.py : Interaction avec l'API OpenAI pour l'analyse et la rédaction.
-
-•
-opportunites.csv : Fichier de sortie contenant les résultats.
-
-Gestion des erreurs
-
-Le script inclut des blocs try-except pour gérer les timeouts de page ou les erreurs d'API. Si un site bloque le scraping, le script passera à l'offre suivante ou à la source suivante.
+| Variable | Description |
+|----------|-------------|
+| `GROQ_API_KEY` | Cle API Groq |
+| `GMAIL_USER` | Email Gmail pour l'envoi |
+| `GMAIL_APP_PASSWORD` | Mot de passe app Gmail |
+| `RECIPIENT_EMAIL` | Email destinataire du rapport |
