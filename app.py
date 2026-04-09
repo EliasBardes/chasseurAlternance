@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import ast
+import html as html_lib
+import os
 
 st.set_page_config(page_title="Chasseur d'Alternance", page_icon="⚡", layout="wide")
 
@@ -94,43 +96,67 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Données ---
-df = pd.read_csv("opportunites.csv")
-df = df[df["title"] != "N/A"].dropna(subset=["title"])
-sort_col = "final_score" if "final_score" in df.columns else "relevance_score"
-df = df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+
+def safe(val, default=""):
+    """Retourne une string safe pour le HTML, jamais NaN."""
+    if pd.isna(val):
+        return default
+    return html_lib.escape(str(val).strip())
+
+
+def safe_float(val, default=0):
+    try:
+        v = float(val)
+        if pd.isna(v):
+            return default
+        return v
+    except (ValueError, TypeError):
+        return default
+
 
 def parse_email(raw):
     raw = str(raw)
+    if raw in ("nan", "None", ""):
+        return ""
     if raw.startswith("{"):
         try:
             data = ast.literal_eval(raw)
             for k in ["corps", "contenu", " contenu", "body", "personalized_email"]:
-                if k in data: return str(data[k])
+                if k in data:
+                    return str(data[k])
         except Exception:
             pass
     return raw
 
-def badge(val, label, cls="badge-blue"):
-    return f'<span class="badge {cls}">{label} {val}</span>'
+
+# --- Donnees ---
+csv_path = "opportunites.csv"
+if not os.path.exists(csv_path):
+    st.info("Le pipeline est en cours... Rechargez la page dans quelques minutes.")
+    st.stop()
+
+df = pd.read_csv(csv_path)
+df = df[df["title"] != "N/A"].dropna(subset=["title"])
+sort_col = "final_score" if "final_score" in df.columns else "relevance_score"
+df = df.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
 # --- Hero ---
 today = df["posted_date"].max() if "posted_date" in df.columns else ""
 st.markdown(f"""
 <div class="hero">
-  <div class="hero-title">⚡ Chasseur d'Alternance</div>
-  <div class="hero-sub">Pipeline IA · Scraping multi-sources + Analyse LLM · Elias Bardes @ HETIC · Dernière mise à jour : {today}</div>
+  <div class="hero-title">Chasseur d'Alternance</div>
+  <div class="hero-sub">Pipeline IA - Scraping multi-sources + Analyse LLM - Elias Bardes @ HETIC - Derniere mise a jour : {safe(today)}</div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- Métriques ---
+# --- Metriques ---
 cols = st.columns(5)
 avg_score = df[sort_col].mean()
 top_hire = df["hire_probability"].mean() if "hire_probability" in df.columns else 0
 fresh = df[df["posted_date"] >= df["posted_date"].max()].shape[0] if "posted_date" in df.columns else 0
 for col, val, label in zip(cols,
     [len(df), f"{avg_score:.1f}/10", f"{top_hire:.1f}/10", fresh, df["source"].nunique()],
-    ["Offres analysées", "Score moyen", "Proba embauche moy.", "Nouvelles aujourd'hui", "Sources"]
+    ["Offres analysees", "Score moyen", "Proba embauche moy.", "Nouvelles aujourd'hui", "Sources"]
 ):
     col.markdown(f'<div class="metric-card"><div class="metric-value">{val}</div><div class="metric-label">{label}</div></div>', unsafe_allow_html=True)
 
@@ -138,63 +164,69 @@ st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
 # --- Offres ---
 for _, row in df.iterrows():
-    final  = row.get("final_score", row.get("relevance_score", 0))
-    relev  = row.get("relevance_score", 0)
-    hire   = row.get("hire_probability", "?")
-    bonus  = row.get("recency_bonus", 0)
-    posted = row.get("posted_date", "")
-    insight = str(row.get("company_insight", ""))
-    alt_score = row.get("alternant_data_score", 0)
+    final = safe_float(row.get("final_score", row.get("relevance_score", 0)))
+    relev = safe_float(row.get("relevance_score", 0))
+    hire = safe_float(row.get("hire_probability", 0))
+    bonus = safe_float(row.get("recency_bonus", 0))
+    posted = safe(row.get("posted_date", ""))
+    insight = safe(row.get("company_insight", ""))
+    alt_score = safe_float(row.get("alternant_data_score", 0))
 
-    fc = float(final)
-    badge_cls = "badge-green" if fc >= 7 else "badge-yellow" if fc >= 5 else "badge-red"
+    badge_cls = "badge-green" if final >= 7 else "badge-yellow" if final >= 5 else "badge-red"
 
+    skills_raw = str(row.get("key_skills", ""))
     skills_html = "".join(
-        f'<span class="tag">{s.strip()}</span>'
-        for s in str(row.get("key_skills", "")).split(",")
+        f'<span class="tag">{html_lib.escape(s.strip())}</span>'
+        for s in skills_raw.split(",")
         if s.strip() and s.strip() != "nan"
     )
 
-    email_text = parse_email(row.get("personalized_email", ""))
+    email_text = html_lib.escape(parse_email(row.get("personalized_email", "")))
 
-    has_link = pd.notna(row.get("link")) and str(row.get("link", "")).startswith("http")
-    link_url = row["link"] if has_link else "#"
+    link = str(row.get("link", ""))
+    has_link = link.startswith("http")
+    title_safe = safe(row.get("title", ""))
+    company_safe = safe(row.get("company", ""))
+    contact_safe = safe(row.get("contact", "N/A"), "N/A")
+    source_safe = safe(row.get("source", ""))
 
     title_html = (
-        f'<a href="{link_url}" target="_blank" style="text-decoration:none;">'
-        f'<div class="job-title" style="cursor:pointer;">{row["title"]} <span style="font-size:0.75rem;color:#4A5568;">↗</span></div></a>'
-        if has_link else f'<div class="job-title">{row["title"]}</div>'
+        f'<a href="{link}" target="_blank" style="text-decoration:none;">'
+        f'<div class="job-title" style="cursor:pointer;">{title_safe} <span style="font-size:0.75rem;color:#4A5568;">&#8599;</span></div></a>'
+        if has_link else f'<div class="job-title">{title_safe}</div>'
     )
 
     link_btn_top = (
-        f'<a href="{link_url}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:white;padding:7px 16px;border-radius:8px;font-size:0.8rem;font-weight:600;text-decoration:none;white-space:nowrap;">Voir l\'offre ↗</a>'
+        f'<a href="{link}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#1d4ed8,#6d28d9);color:white;padding:7px 16px;border-radius:8px;font-size:0.8rem;font-weight:600;text-decoration:none;white-space:nowrap;">Voir l\'offre &#8599;</a>'
         if has_link else ""
     )
 
-    insight_html = f'<div class="insight-box">🔍 {insight}</div>' if insight and insight != "nan" else ""
+    insight_html = f'<div class="insight-box">{insight}</div>' if insight else ""
+
+    recent_badge = '<span class="badge badge-green">Recent</span>' if bonus >= 2 else ''
 
     st.markdown(f"""
     <div class="job-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.7rem;">
         <div style="flex:1;min-width:0;">
           {title_html}
-          <div class="job-company">{row['company']}</div>
+          <div class="job-company">{company_safe}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.5rem;flex-shrink:0;">
           {link_btn_top}
           <div class="score-row" style="justify-content:flex-end;">
             <span class="badge {badge_cls}">Score {final}/10</span>
             <span class="badge badge-purple">Embauche {hire}/10</span>
-            <span class="badge badge-blue">{row.get('source','')}</span>
-            {'<span class="badge badge-green">🔥 Récent</span>' if bonus and float(bonus) >= 2 else ''}
-            <span style="color:#4A5568;font-size:0.75rem;">Publié {posted}</span>
+            <span class="badge badge-blue">{source_safe}</span>
+            {recent_badge}
+            <span style="color:#4A5568;font-size:0.75rem;">Publie {posted}</span>
           </div>
         </div>
       </div>
 
       {insight_html}
 
-      <div class="label">Compétences clés</div>
+      <div class="label">Competences cles</div>
       <div>{skills_html or '<span style="color:#4A5568;font-size:0.8rem">N/A</span>'}</div>
 
       <div style="display:flex;gap:2rem;margin-top:0.8rem;flex-wrap:wrap;">
@@ -204,15 +236,15 @@ for _, row in df.iterrows():
         </div>
         <div>
           <div class="label">Alternants data (web)</div>
-          <span style="color:#B794F4;font-weight:600;">{int(alt_score) if alt_score == alt_score else 0}/20</span>
+          <span style="color:#B794F4;font-weight:600;">{int(alt_score)}/20</span>
         </div>
         <div>
           <div class="label">Contact</div>
-          <span style="color:#718096;font-size:0.82rem;">{row.get('contact','N/A')}</span>
+          <span style="color:#718096;font-size:0.82rem;">{contact_safe}</span>
         </div>
       </div>
 
-      <div class="label">Email personnalisé</div>
+      <div class="label">Email personnalise</div>
       <div class="email-box">{email_text}</div>
     </div>
     """, unsafe_allow_html=True)
