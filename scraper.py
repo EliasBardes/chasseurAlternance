@@ -173,7 +173,15 @@ class JobScraper:
 
     async def run(self):
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                ],
+            )
             page = await browser.new_page()
             await page.set_extra_http_headers({"Accept-Language": "fr-FR,fr;q=0.9"})
 
