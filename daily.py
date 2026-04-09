@@ -100,7 +100,10 @@ async def main():
     # 5. Email avec lien de l'app
     recipient = os.environ.get("RECIPIENT_EMAIL")
     if recipient:
-        send_daily_link(processed[:10], recipient)
+        try:
+            send_daily_link(processed[:10], recipient)
+        except Exception as e:
+            logger.warning(f"Email non envoyé (SMTP bloqué sur Render free tier) : {e}")
     else:
         logger.warning("RECIPIENT_EMAIL non défini — email non envoyé")
 
