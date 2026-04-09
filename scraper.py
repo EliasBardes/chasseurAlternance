@@ -1,9 +1,10 @@
-import asyncio
-from playwright.async_api import async_playwright
-import json
 import logging
-from datetime import datetime, timedelta
 import re
+import urllib.parse
+from datetime import datetime, timedelta
+
+import requests
+from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,8 +15,14 @@ LINKEDIN_KEYWORDS = [
     "Data Analyst alternance",
 ]
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "fr-FR,fr;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+
 def parse_linkedin_date(text: str) -> str:
-    """Convertit le texte relatif LinkedIn en date ISO."""
     text = text.lower().strip()
     now = datetime.now()
     try:
@@ -30,15 +37,18 @@ def parse_linkedin_date(text: str) -> str:
             return (now - timedelta(weeks=n)).strftime("%Y-%m-%d")
         if "mois" in text or "month" in text:
             n = int(re.search(r'\d+', text).group())
-            return (now - timedelta(days=n*30)).strftime("%Y-%m-%d")
+            return (now - timedelta(days=n * 30)).strftime("%Y-%m-%d")
     except Exception:
         pass
     return now.strftime("%Y-%m-%d")
+
 
 class JobScraper:
     def __init__(self):
         self.results = []
         self._seen_links = set()
+        self.session = requests.Session()
+        self.session.headers.update(HEADERS)
 
     def _add(self, source, title, company, link, posted_date=""):
         if link and link in self._seen_links:
@@ -53,29 +63,29 @@ class JobScraper:
             "posted_date": posted_date or datetime.now().strftime("%Y-%m-%d"),
         })
 
-    async def scrape_linkedin(self, page, keyword, limit=4):
-        import urllib.parse
+    def scrape_linkedin(self, keyword, limit=4):
         encoded = urllib.parse.quote(keyword)
         url = f"https://www.linkedin.com/jobs/search?keywords={encoded}&location=France&f_TPR=r604800&f_JT=I&sortBy=DD"
         logger.info(f"Scraping LinkedIn [{keyword}]")
         try:
-            await page.goto(url)
-            await page.wait_for_selector(".base-card", timeout=12000)
-            jobs = await page.query_selector_all(".base-card")
+            resp = self.session.get(url, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            jobs = soup.select(".base-card")
             count = 0
             for job in jobs:
                 if count >= limit:
                     break
                 try:
-                    title_el   = await job.query_selector(".base-search-card__title")
-                    company_el = await job.query_selector(".base-search-card__subtitle")
-                    link_el    = await job.query_selector("a.base-card__full-link")
-                    date_el    = await job.query_selector("time")
-                    title   = (await title_el.inner_text()).strip()   if title_el   else "N/A"
-                    company = (await company_el.inner_text()).strip() if company_el else "N/A"
-                    link    = await link_el.get_attribute("href")     if link_el    else ""
-                    date_txt = await date_el.inner_text()             if date_el    else ""
-                    posted  = parse_linkedin_date(date_txt)
+                    title_el = job.select_one(".base-search-card__title")
+                    company_el = job.select_one(".base-search-card__subtitle")
+                    link_el = job.select_one("a.base-card__full-link")
+                    date_el = job.select_one("time")
+                    title = title_el.get_text(strip=True) if title_el else "N/A"
+                    company = company_el.get_text(strip=True) if company_el else "N/A"
+                    link = link_el["href"] if link_el and link_el.has_attr("href") else ""
+                    date_txt = date_el.get_text(strip=True) if date_el else ""
+                    posted = parse_linkedin_date(date_txt)
                     if title != "N/A":
                         self._add("LinkedIn", title, company, link, posted)
                         count += 1
@@ -84,29 +94,28 @@ class JobScraper:
         except Exception as e:
             logger.error(f"LinkedIn scrape failed [{keyword}]: {e}")
 
-    async def scrape_wttj(self, page, limit=4):
+    def scrape_wttj(self, limit=4):
         url = "https://www.welcometothejungle.com/fr/jobs?query=alternant+Data+Analyst&refinementList%5Bcontract_type%5D%5B%5D=alternance&aroundQuery=France&sortBy=published_at"
         logger.info("Scraping Welcome to the Jungle")
         try:
-            await page.goto(url)
-            await page.wait_for_selector("li article", timeout=12000)
-            jobs = await page.query_selector_all("li article")
+            resp = self.session.get(url, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            jobs = soup.select("li article")
             count = 0
             for job in jobs:
                 if count >= limit:
                     break
                 try:
-                    title_el   = await job.query_selector("h4")
-                    company_el = await job.query_selector("span")
-                    link_el    = await job.query_selector("a")
-                    date_el    = await job.query_selector("time")
-                    title   = (await title_el.inner_text()).strip()   if title_el   else "N/A"
-                    company = (await company_el.inner_text()).strip() if company_el else "N/A"
-                    link    = await link_el.get_attribute("href")     if link_el    else ""
-                    posted  = await date_el.get_attribute("datetime") if date_el    else ""
-                    if posted:
-                        posted = posted[:10]
-                    else:
+                    title_el = job.select_one("h4")
+                    company_el = job.select_one("span")
+                    link_el = job.select_one("a")
+                    date_el = job.select_one("time")
+                    title = title_el.get_text(strip=True) if title_el else "N/A"
+                    company = company_el.get_text(strip=True) if company_el else "N/A"
+                    link = link_el["href"] if link_el and link_el.has_attr("href") else ""
+                    posted = date_el["datetime"][:10] if date_el and date_el.has_attr("datetime") else ""
+                    if not posted:
                         posted = datetime.now().strftime("%Y-%m-%d")
                     if link and not link.startswith("http"):
                         link = "https://www.welcometothejungle.com" + link
@@ -118,29 +127,30 @@ class JobScraper:
         except Exception as e:
             logger.error(f"WTTJ scrape failed: {e}")
 
-    async def scrape_hellowork(self, page, limit=4):
+    def scrape_hellowork(self, limit=4):
         url = "https://www.hellowork.com/fr-fr/emploi/recherche.html?k=alternant+data+analyst&c=Alternance&l=France&tri=date"
         logger.info("Scraping HelloWork")
         try:
-            await page.goto(url)
-            await page.wait_for_selector("[data-cy='offerList'] li, article", timeout=12000)
-            jobs = await page.query_selector_all("[data-cy='offerList'] li")
+            resp = self.session.get(url, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            jobs = soup.select("[data-cy='offerList'] li")
             if not jobs:
-                jobs = await page.query_selector_all("article.job-card, li[class*='job']")
+                jobs = soup.select("article.job-card, li[class*='job']")
             count = 0
             for job in jobs:
                 if count >= limit:
                     break
                 try:
-                    title_el   = await job.query_selector("h2, h3, [data-cy='offerTitle']")
-                    company_el = await job.query_selector("[class*='company'], [data-cy='offerCompany']")
-                    link_el    = await job.query_selector("a")
-                    date_el    = await job.query_selector("time, [class*='date']")
-                    title   = (await title_el.inner_text()).strip()   if title_el   else "N/A"
-                    company = (await company_el.inner_text()).strip() if company_el else "N/A"
-                    link    = await link_el.get_attribute("href")     if link_el    else ""
-                    posted  = await date_el.inner_text()              if date_el    else ""
-                    posted  = parse_linkedin_date(posted) if posted else datetime.now().strftime("%Y-%m-%d")
+                    title_el = job.select_one("h2, h3, [data-cy='offerTitle']")
+                    company_el = job.select_one("[class*='company'], [data-cy='offerCompany']")
+                    link_el = job.select_one("a")
+                    date_el = job.select_one("time, [class*='date']")
+                    title = title_el.get_text(strip=True) if title_el else "N/A"
+                    company = company_el.get_text(strip=True) if company_el else "N/A"
+                    link = link_el["href"] if link_el and link_el.has_attr("href") else ""
+                    posted = date_el.get_text(strip=True) if date_el else ""
+                    posted = parse_linkedin_date(posted) if posted else datetime.now().strftime("%Y-%m-%d")
                     if link and not link.startswith("http"):
                         link = "https://www.hellowork.com" + link
                     if title != "N/A":
@@ -151,51 +161,40 @@ class JobScraper:
         except Exception as e:
             logger.error(f"HelloWork scrape failed: {e}")
 
-    async def get_job_description(self, page, job):
+    def get_job_description(self, job):
         url = job.get("link", "")
         if not url or not url.startswith("http"):
             return
         try:
-            await page.goto(url)
+            resp = self.session.get(url, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
             desc = ""
             if "linkedin.com" in url:
-                el = await page.query_selector(".description__text")
-                if el: desc = await el.inner_text()
+                el = soup.select_one(".description__text")
+                if el:
+                    desc = el.get_text(strip=True)
             elif "welcometothejungle.com" in url:
-                el = await page.query_selector("main")
-                if el: desc = await el.inner_text()
+                el = soup.select_one("main")
+                if el:
+                    desc = el.get_text(strip=True)
             elif "hellowork.com" in url:
-                el = await page.query_selector("[class*='description'], main")
-                if el: desc = await el.inner_text()
+                el = soup.select_one("[class*='description'], main")
+                if el:
+                    desc = el.get_text(strip=True)
             job["description"] = desc.strip()
         except Exception as e:
             logger.error(f"Error getting description for {url}: {e}")
 
     async def run(self):
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                ],
-            )
-            page = await browser.new_page()
-            await page.set_extra_http_headers({"Accept-Language": "fr-FR,fr;q=0.9"})
+        for keyword in LINKEDIN_KEYWORDS:
+            self.scrape_linkedin(keyword, limit=4)
+        self.scrape_wttj(limit=4)
+        self.scrape_hellowork(limit=4)
 
-            for keyword in LINKEDIN_KEYWORDS:
-                await self.scrape_linkedin(page, keyword, limit=4)
-            await self.scrape_wttj(page, limit=4)
-            await self.scrape_hellowork(page, limit=4)
+        for job in self.results:
+            logger.info(f"Description: {job['title']} @ {job['company']}")
+            self.get_job_description(job)
 
-            for job in self.results:
-                logger.info(f"Description: {job['title']} @ {job['company']}")
-                await self.get_job_description(page, job)
-
-            await browser.close()
-
-        # Trier par date décroissante
         self.results.sort(key=lambda j: j.get("posted_date", ""), reverse=True)
         return self.results[:20]

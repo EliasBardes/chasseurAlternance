@@ -1,36 +1,38 @@
 """
-Recherche la réputation alternance data d'une entreprise via DuckDuckGo.
-Retourne un score et un résumé utilisable par le LLM.
+Recherche la reputation alternance data d'une entreprise via DuckDuckGo.
+Retourne un score et un resume utilisable par le LLM.
 """
-import asyncio
 import logging
-from playwright.async_api import async_playwright
+import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-async def research_company(page, company_name: str) -> dict:
-    """Cherche sur DuckDuckGo combien d'alternants data cette boite recrute."""
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "fr-FR,fr;q=0.9",
+}
+
+
+def research_company(session, company_name: str) -> dict:
     if not company_name or company_name in ("N/A", ""):
         return {"alternant_data_count": 0, "summary": "Entreprise inconnue"}
 
     query = f"{company_name} alternance data analyst site:linkedin.com OR site:welcometothejungle.com OR site:indeed.fr"
-    url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}&kl=fr-fr"
+    url = f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}&kl=fr-fr"
 
     try:
-        await page.goto(url, timeout=15000)
-        await page.wait_for_selector("[data-result='web'], .result", timeout=8000)
+        resp = session.get(url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        results = await page.query_selector_all("[data-result='web'], .result")
+        results = soup.select(".result__snippet")
         snippets = []
         for r in results[:5]:
-            try:
-                text_el = await r.query_selector(".result__snippet, [class*='snippet'], span")
-                if text_el:
-                    snippets.append((await text_el.inner_text()).strip())
-            except Exception:
-                pass
+            text = r.get_text(strip=True)
+            if text:
+                snippets.append(text)
 
-        # Compte les occurrences de mots-clés positifs
         full_text = " ".join(snippets).lower()
         score = 0
         score += full_text.count("alternant") * 2
@@ -40,37 +42,25 @@ async def research_company(page, company_name: str) -> dict:
         score += full_text.count("recrutement") * 1
         score += full_text.count("stage") * 1
 
-        summary = (" | ".join(snippets[:3]))[:300] if snippets else "Aucun résultat trouvé"
+        summary = (" | ".join(snippets[:3]))[:300] if snippets else "Aucun resultat trouve"
         logger.info(f"[{company_name}] score alternance data = {score}")
         return {"alternant_data_score": min(score, 20), "summary": summary}
 
     except Exception as e:
-        logger.warning(f"Recherche échouée pour {company_name}: {e}")
+        logger.warning(f"Recherche echouee pour {company_name}: {e}")
         return {"alternant_data_score": 0, "summary": "Recherche indisponible"}
 
 
 async def batch_research(companies: list[str]) -> dict:
-    """Recherche en lot, une seule instance Playwright."""
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-            ],
-        )
-        page = await browser.new_page()
-        await page.set_extra_http_headers({"Accept-Language": "fr-FR,fr;q=0.9"})
+    session = requests.Session()
+    session.headers.update(HEADERS)
 
-        results = {}
-        seen = set()
-        for company in companies:
-            if company in seen or not company or company == "N/A":
-                continue
-            seen.add(company)
-            results[company] = await research_company(page, company)
+    results = {}
+    seen = set()
+    for company in companies:
+        if company in seen or not company or company == "N/A":
+            continue
+        seen.add(company)
+        results[company] = research_company(session, company)
 
-        await browser.close()
     return results
